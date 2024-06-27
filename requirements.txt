@@ -1,0 +1,10 @@
+yfinance
+pandas
+numpy
+scikit-learn
+smtplib
+twilio
+logging
+scipy
+joblib
+
