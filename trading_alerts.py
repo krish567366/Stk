@@ -11,11 +11,8 @@ from datetime import datetime
 from joblib import dump, load
 from sklearn.model_selection import train_test_split, GridSearchCV
 from sklearn.preprocessing import StandardScaler
-from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
+from sklearn.ensemble import RandomForestClassifier
 from sklearn.pipeline import Pipeline
-from sklearn.metrics import accuracy_score, precision_score, recall_score
-from nsepy import get_history
-from jugaad_data import nse
 import requests
 from bs4 import BeautifulSoup
 from textblob import TextBlob
@@ -35,8 +32,16 @@ SYMBOLS = {
     'Sensex': '^BSESN',
     'Fin Nifty': '^NIFTYFIN'
 }
+JUGAAD_SYMBOLS = {
+    'Nifty': 'NIFTY 50',
+    'Bank Nifty': 'NIFTY BANK',
+    'Midcap Nifty': 'BSE MIDCAP',
+    'Bankex': 'BSE BANKEX',
+    'Sensex': 'BSE SENSEX',
+    'Fin Nifty': 'NIFTY FIN SERVICE'
+}
 ALERT_THRESHOLD = 0.95
-CHECK_INTERVAL = 1  # Check every 1 second for real-time analysis
+CHECK_INTERVAL = 60  # Check every 60 seconds for real-time analysis (adjust as needed)
 MODEL_FILE = 'gamma_blast_model.joblib'
 
 # Initialize Twilio Client
@@ -46,18 +51,18 @@ twilio_client = Client(TWILIO_SID, TWILIO_TOKEN)
 logging.basicConfig(level=logging.INFO, filename='gamma_blast.log', filemode='a',
                     format='%(asctime)s - %(levelname)s - %(message)s')
 
-# Define market open and close times (for illustrative purposes, adjust as per actual market timings)
+# Define market open and close times (adjust as per actual market timings)
 MARKET_OPEN = datetime.strptime('09:15', '%H:%M').time()
 MARKET_CLOSE = datetime.strptime('15:30', '%H:%M').time()
 
 # Additional configuration for expiry days and indices
 INDEX_EXPIRY_DAYS = {
-    'BANKEX': 'Monday',
-    'SENSEX': 'Friday',
-    'MIDCAP NIFTY': 'Monday',
-    'FINNIFTY': 'Tuesday',
-    'BANKNIFTY': 'Wednesday',
-    'NIFTY': 'Thursday'
+    'Bankex': 'Monday',
+    'Sensex': 'Friday',
+    'Midcap Nifty': 'Monday',
+    'Fin Nifty': 'Tuesday',
+    'Bank Nifty': 'Wednesday',
+    'Nifty': 'Thursday'
 }
 
 def send_email(subject, body):
@@ -165,7 +170,7 @@ def calculate_fibonacci_retracement(prices):
     max_price = prices.max()
     min_price = prices.min()
     diff = max_price - min_price
-    retracement_levels = {
+        retracement_levels = {
         '0.0%': max_price,
         '23.6%': max_price - diff * 0.236,
         '38.2%': max_price - diff * 0.382,
@@ -258,12 +263,12 @@ def main():
                 combined_data = fetch_and_prepare_data(ticker, start_date, end_date)
 
                 # Train the model with the prepared data
-                X = combined_data.drop(columns=['target'])
+                X = combined_data.drop(columns=['target'])  # Assuming 'target' is the target variable column
                 y = combined_data['target']
                 model = build_and_train_model(X, y)
 
                 # Predict and analyze the options
-                predictions = model.predict(options_df.drop(columns=['type']))
+                predictions = model.predict(options_df.drop(columns=['type']))  # Assuming 'type' column needs to be dropped for prediction
                 options_df['prediction'] = predictions
 
                 gamma_blasts = options_df[(options_df['prediction'] == 1) & (options_df['gamma'] > ALERT_THRESHOLD)]
@@ -276,4 +281,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
