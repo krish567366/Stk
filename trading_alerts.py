@@ -9,12 +9,16 @@ import logging
 from scipy.stats import norm
 from datetime import datetime
 from joblib import dump, load
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, GridSearchCV
 from sklearn.preprocessing import StandardScaler
-from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
+from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier, VotingClassifier
+from sklearn.svm import SVC
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.neural_network import MLPClassifier
 from sklearn.pipeline import Pipeline
 from sklearn.metrics import accuracy_score, precision_score, recall_score
-
+from imblearn.over_sampling import SMOTE
+from textblob import TextBlob
 # Configuration
 EMAIL_USER = 'your_email@gmail.com'
 EMAIL_PASSWORD = 'your_email_password'
@@ -37,10 +41,6 @@ MODEL_FILE = 'gamma_blast_model.joblib'
 # Initialize Twilio Client
 twilio_client = Client(TWILIO_SID, TWILIO_TOKEN)
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, filename='gamma_blast.log', filemode='a',
-                    format='%(asctime)s - %(levelname)s - %(message)s')
-
 # Define market open and close times (for illustrative purposes, adjust as per actual market timings)
 MARKET_OPEN = datetime.strptime('09:15', '%H:%M').time()
 MARKET_CLOSE = datetime.strptime('15:30', '%H:%M').time()
@@ -54,7 +54,6 @@ INDEX_EXPIRY_DAYS = {
     'BANKNIFTY': 'Wednesday',
     'NIFTY': 'Thursday'
 }
-
 def send_email(subject, body):
     msg = MIMEText(body)
     msg['Subject'] = subject
@@ -104,7 +103,33 @@ def calculate_indicators(options_df):
     options_df['rsi'] = calculate_rsi(options_df['lastPrice'])
     options_df['skewness'] = options_df['lastPrice'].skew()
     options_df['kurtosis'] = options_df['lastPrice'].kurtosis()
+
+    # Synthetic data generation
+    X_train, y_train = options_df[['impliedVolatility', 'volume', 'openInterest', 'price_zscore',
+                                   'bid_ask_spread', 'historical_volatility', 'rsi', 'skewness', 'kurtosis',
+                                   'delta', 'gamma', 'theta', 'vega']], options_df['price_change'].apply(lambda x: 1 if x > 0.5 else 0)
+    options_df = generate_synthetic_data(X_train, y_train)
+
+    # Sentiment analysis (example: using a placeholder sentiment score)
+    options_df['sentiment_score'] = options_df['news_text'].apply(get_sentiment)
+
+    # Additional technical indicators (example: Bollinger Bands)
+    options_df['upper_band'], options_df['lower_band'] = calculate_bollinger_bands(options_df['lastPrice'])
+
+    # Seasonality features
+    options_df['is_near_expiry'] = options_df['expiry_date'].apply(lambda x: 1 if x is close to today else 0)
+
     return options_df
+
+def generate_synthetic_data(X_train, y_train):
+    smote = SMOTE(random_state=42)
+    X_resampled, y_resampled = smote.fit_resample(X_train, y_train)
+    return X_resampled, y_resampled
+
+def get_sentiment(text):
+    blob = TextBlob(text)
+    sentiment_score = blob.sentiment.polarity
+    return sentiment_score
 
 def calculate_delta(S, K, sigma, T, r, option_type):
     d1 = (np.log(S / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * np.sqrt(T))
@@ -139,10 +164,17 @@ def calculate_rsi(prices, window=14):
     rsi = 100 - (100 / (1 + rs))
     return rsi
 
+def calculate_bollinger_bands(prices, window=20):
+    rolling_mean = prices.rolling(window=window).mean()
+    rolling_std = prices.rolling(window=window).std()
+    upper_band = rolling_mean + 2 * rolling_std
+    lower_band = rolling_mean - 2 * rolling_std
+    return upper_band, lower_band
+
 def train_predictive_model(data):
     features = data[['impliedVolatility', 'volume', 'openInterest', 'price_zscore',
                      'bid_ask_spread', 'historical_volatility', 'rsi', 'skewness', 'kurtosis',
-                     'delta', 'gamma', 'theta', 'vega']]
+                     'delta', 'gamma', 'theta', 'vega', 'sentiment_score', 'upper_band', 'lower_band', 'is_near_expiry']]
     target = data['price_change'].apply(lambda x: 1 if x > 0.5 else 0)  # Example threshold for significant change
 
     X_train, X_test, y_train, y_test = train_test_split(features, target, test_size=0.2, random_state=42)
@@ -150,27 +182,85 @@ def train_predictive_model(data):
     scaler = StandardScaler()
     clf_rf = RandomForestClassifier(n_estimators=100, random_state=42)
     clf_gb = GradientBoostingClassifier(n_estimators=100, learning_rate=0.1, random_state=42)
+    clf_svm = SVC(kernel='linear', probability=True, random_state=42)
+    clf_knn = KNeighborsClassifier()
+    clf_nn = MLPClassifier(hidden_layer_sizes=(100,), max_iter=1000, random_state=42)
 
     pipeline_rf = Pipeline([('scaler', scaler), ('clf', clf_rf)])
     pipeline_gb = Pipeline([('scaler', scaler), ('clf', clf_gb)])
+    pipeline_svm = Pipeline([('scaler', scaler), ('clf', clf_svm)])
+    pipeline_knn = Pipeline([('scaler', scaler), ('clf', clf_knn)])
+    pipeline_nn = Pipeline([('scaler', scaler), ('clf', clf_nn)])
 
-    # Train models
-    pipeline_rf.fit(X_train, y_train)
-    pipeline_gb.fit(X_train, y_train)
+    # Define the parameter grids for GridSearchCV
+    param_grid_rf = {
+        'clf__n_estimators': [50, 100, 200],
+        'clf__max_depth': [None, 10, 20]
+    }
+
+    param_grid_gb = {
+        'clf__n_estimators': [50, 100, 200],
+        'clf__learning_rate': [0.05, 0.1, 0.2]
+    }
+
+    param_grid_svm = {
+        'clf__C': [0.1, 1, 10],
+        'clf__gamma': [0.1, 1, 10],
+    }
+
+    param_grid_knn = {
+        'clf__n_neighbors': [3, 5, 7],
+        'clf__weights': ['uniform', 'distance']
+    }
+
+    param_grid_nn = {
+        'clf__alpha': [0.0001, 0.001, 0.01],
+        'clf__learning_rate_init': [0.001, 0.01, 0.1]
+    }
+
+    # Train models using GridSearchCV for hyperparameter tuning
+    grid_search_rf = GridSearchCV(pipeline_rf, param_grid_rf, cv=5, n_jobs=-1)
+    grid_search_gb = GridSearchCV(pipeline_gb, param_grid_gb, cv=5, n_jobs=-1)
+    grid_search_svm = GridSearchCV(pipeline_svm, param_grid_svm, cv=5, n_jobs=-1)
+    grid_search_knn = GridSearchCV(pipeline_knn, param_grid_knn, cv=5, n_jobs=-1)
+    grid_search_nn = GridSearchCV(pipeline_nn, param_grid_nn, cv=5, n_jobs=-1)
+
+    # Fit models
+    grid_search_rf.fit(X_train, y_train)
+    grid_search_gb.fit(X_train, y_train)
+    grid_search_svm.fit(X_train, y_train)
+    grid_search_knn.fit(X_train, y_train)
+    grid_search_nn.fit(X_train, y_train)
 
     # Evaluate models
-    y_pred_rf = pipeline_rf.predict(X_test)
-    y_pred_gb = pipeline_gb.predict(X_test)
+    best_model_rf = grid_search_rf.best_estimator_
+    best_model_gb = grid_search_gb.best_estimator_
+    best_model_svm = grid_search_svm.best_estimator_
+    best_model_knn = grid_search_knn.best_estimator_
+    best_model_nn = grid_search_nn.best_estimator_
 
-    logging.info(f"Random Forest - Accuracy: {accuracy_score(y_test, y_pred_rf)}, Precision: {precision_score(y_test, y_pred_rf)}, Recall: {recall_score(y_test, y_pred_rf)}")
-    logging.info(f"Gradient Boosting - Accuracy: {accuracy_score(y_test, y_pred_gb)}, Precision: {precision_score(y_test, y_pred_gb)}, Recall: {recall_score(y_test, y_pred_rf)}")
-    logging.info(f"Gradient Boosting - Accuracy: {accuracy_score(y_test, y_pred_gb)}, Precision: {precision_score(y_test, y_pred_gb)}, Recall: {recall_score(y_test, y_pred_gb)}")
+    logging.info(f"Random Forest - Best Parameters: {grid_search_rf.best_params_}")
+    logging.info(f"Gradient Boosting - Best Parameters: {grid_search_gb.best_params_}")
+    logging.info(f"SVM - Best Parameters: {grid_search_svm.best_params_}")
+    logging.info(f"KNN - Best Parameters: {grid_search_knn.best_params_}")
+    logging.info(f"Neural Network - Best Parameters: {grid_search_nn.best_params_}")
+
+    # Voting Classifier
+    voting_clf = VotingClassifier(estimators=[('rf', best_model_rf), ('gb', best_model_gb), ('svm', best_model_svm),
+                                              ('knn', best_model_knn), ('nn', best_model_nn)], voting='soft')
+
+    voting_clf.fit(X_train, y_train)
+
+    # Evaluate the ensemble model
+    y_pred_voting = voting_clf.predict(X_test)
+    logging.info(f"Voting Classifier - Accuracy: {accuracy_score(y_test, y_pred_voting)}, "
+                 f"Precision: {precision_score(y_test, y_pred_voting)}, "
+                 f"Recall: {recall_score(y_test, y_pred_voting)}")
 
     # Save the best model
-    best_model = pipeline_rf if accuracy_score(y_test, y_pred_rf) > accuracy_score(y_test, y_pred_gb) else pipeline_gb
-    dump(best_model, MODEL_FILE)
+    dump(voting_clf, MODEL_FILE)
 
-    return best_model
+    return voting_clf
 
 def load_predictive_model():
     return load(MODEL_FILE)
@@ -178,7 +268,7 @@ def load_predictive_model():
 def make_predictions(options_df, model):
     features = options_df[['impliedVolatility', 'volume', 'openInterest', 'price_zscore',
                            'bid_ask_spread', 'historical_volatility', 'rsi', 'skewness', 'kurtosis',
-                           'delta', 'gamma', 'theta', 'vega']]
+                           'delta', 'gamma', 'theta', 'vega', 'sentiment_score', 'upper_band', 'lower_band', 'is_near_expiry']]
     options_df['prediction'] = model.predict_proba(features)[:, 1]
 
     return options_df
