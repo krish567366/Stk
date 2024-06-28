@@ -9,13 +9,11 @@ import logging
 from scipy.stats import norm
 from datetime import datetime
 from joblib import dump, load
-from sklearn.model_selection import train_test_split, GridSearchCV
+from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
-from sklearn.ensemble import RandomForestClassifier
+from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
 from sklearn.pipeline import Pipeline
-import requests
-from bs4 import BeautifulSoup
-from textblob import TextBlob
+from sklearn.metrics import accuracy_score, precision_score, recall_score
 
 # Configuration
 EMAIL_USER = 'your_email@gmail.com'
@@ -32,16 +30,8 @@ SYMBOLS = {
     'Sensex': '^BSESN',
     'Fin Nifty': '^NIFTYFIN'
 }
-JUGAAD_SYMBOLS = {
-    'Nifty': 'NIFTY 50',
-    'Bank Nifty': 'NIFTY BANK',
-    'Midcap Nifty': 'BSE MIDCAP',
-    'Bankex': 'BSE BANKEX',
-    'Sensex': 'BSE SENSEX',
-    'Fin Nifty': 'NIFTY FIN SERVICE'
-}
 ALERT_THRESHOLD = 0.95
-CHECK_INTERVAL = 60  # Check every 60 seconds for real-time analysis (adjust as needed)
+CHECK_INTERVAL = 1  # Check every 1 second for real-time analysis
 MODEL_FILE = 'gamma_blast_model.joblib'
 
 # Initialize Twilio Client
@@ -51,18 +41,18 @@ twilio_client = Client(TWILIO_SID, TWILIO_TOKEN)
 logging.basicConfig(level=logging.INFO, filename='gamma_blast.log', filemode='a',
                     format='%(asctime)s - %(levelname)s - %(message)s')
 
-# Define market open and close times (adjust as per actual market timings)
+# Define market open and close times (for illustrative purposes, adjust as per actual market timings)
 MARKET_OPEN = datetime.strptime('09:15', '%H:%M').time()
 MARKET_CLOSE = datetime.strptime('15:30', '%H:%M').time()
 
 # Additional configuration for expiry days and indices
 INDEX_EXPIRY_DAYS = {
-    'Bankex': 'Monday',
-    'Sensex': 'Friday',
-    'Midcap Nifty': 'Monday',
-    'Fin Nifty': 'Tuesday',
-    'Bank Nifty': 'Wednesday',
-    'Nifty': 'Thursday'
+    'BANKEX': 'Monday',
+    'SENSEX': 'Friday',
+    'MIDCAP NIFTY': 'Monday',
+    'FINNIFTY': 'Tuesday',
+    'BANKNIFTY': 'Wednesday',
+    'NIFTY': 'Thursday'
 }
 
 def send_email(subject, body):
@@ -114,9 +104,6 @@ def calculate_indicators(options_df):
     options_df['rsi'] = calculate_rsi(options_df['lastPrice'])
     options_df['skewness'] = options_df['lastPrice'].skew()
     options_df['kurtosis'] = options_df['lastPrice'].kurtosis()
-    options_df['macd'] = calculate_macd(options_df['lastPrice'])
-    options_df['bollinger_bands'] = calculate_bollinger_bands(options_df['lastPrice'])
-    options_df['fibonacci_retracement'] = calculate_fibonacci_retracement(options_df['lastPrice'])
     return options_df
 
 def calculate_delta(S, K, sigma, T, r, option_type):
@@ -152,132 +139,110 @@ def calculate_rsi(prices, window=14):
     rsi = 100 - (100 / (1 + rs))
     return rsi
 
-def calculate_macd(prices, short_window=12, long_window=26, signal_window=9):
-    short_ema = prices.ewm(span=short_window, adjust=False).mean()
-    long_ema = prices.ewm(span=long_window, adjust=False).mean()
-    macd = short_ema - long_ema
-    signal_line = macd.ewm(span=signal_window, adjust=False).mean()
-    return macd - signal_line
+def train_predictive_model(data):
+    features = data[['impliedVolatility', 'volume', 'openInterest', 'price_zscore',
+                     'bid_ask_spread', 'historical_volatility', 'rsi', 'skewness', 'kurtosis',
+                     'delta', 'gamma', 'theta', 'vega']]
+    target = data['price_change'].apply(lambda x: 1 if x > 0.5 else 0)  # Example threshold for significant change
 
-def calculate_bollinger_bands(prices, window=20):
-    sma = prices.rolling(window).mean()
-    std_dev = prices.rolling(window).std()
-    upper_band = sma + (std_dev * 2)
-    lower_band = sma - (std_dev * 2)
-    return upper_band, lower_band
+    X_train, X_test, y_train, y_test = train_test_split(features, target, test_size=0.2, random_state=42)
 
-def calculate_fibonacci_retracement(prices):
-    max_price = prices.max()
-    min_price = prices.min()
-    diff = max_price - min_price
-        retracement_levels = {
-        '0.0%': max_price,
-        '23.6%': max_price - diff * 0.236,
-        '38.2%': max_price - diff * 0.382,
-        '50.0%': max_price - diff * 0.5,
-        '61.8%': max_price - diff * 0.618,
-        '100.0%': min_price
-    }
-    return retracement_levels
+    scaler = StandardScaler()
+    clf_rf = RandomForestClassifier(n_estimators=100, random_state=42)
+    clf_gb = GradientBoostingClassifier(n_estimators=100, learning_rate=0.1, random_state=42)
 
-def get_macro_economic_indicators():
-    # Dummy implementation for macro indicators
-    # In practice, fetch data from a reliable source
-    return {
-        'gdp_growth': 5.0,  # Example value
-        'interest_rate': 4.5,  # Example value
-        'inflation_rate': 3.0  # Example value
-    }
+    pipeline_rf = Pipeline([('scaler', scaler), ('clf', clf_rf)])
+    pipeline_gb = Pipeline([('scaler', scaler), ('clf', clf_gb)])
 
-def get_event_based_data():
-    # Dummy implementation for event data
-    # In practice, fetch data from a reliable source
-    return {
-        'corporate_earnings': 1,  # Example value
-        'geopolitical_events': 0,  # Example value
-        'regulatory_changes': 0  # Example value
-    }
+    # Train models
+    pipeline_rf.fit(X_train, y_train)
+    pipeline_gb.fit(X_train, y_train)
 
-def get_sentiment_analysis(ticker):
-    # Use MoneyControl or other sources to get news and analyze sentiment
-    url = f'https://www.moneycontrol.com/financials/{ticker.lower()}'
-    response = requests.get(url)
-    soup = BeautifulSoup(response.content, 'html.parser')
-    headlines = [tag.get_text() for tag in soup.find_all('a', class_='arial11')]
-    sentiment_scores = [TextBlob(headline).sentiment.polarity for headline in headlines]
-    average_sentiment = np.mean(sentiment_scores)
-    return average_sentiment
+    # Evaluate models
+    y_pred_rf = pipeline_rf.predict(X_test)
+    y_pred_gb = pipeline_gb.predict(X_test)
 
-def fetch_and_prepare_data(ticker, start_date, end_date):
-    data_yf = yf.download(ticker, start=start_date, end=end_date)
-    data_nsepy = get_history(symbol=ticker, start=start_date, end=end_date)
-    data_jugaad = nse.get_quote(ticker)
+    logging.info(f"Random Forest - Accuracy: {accuracy_score(y_test, y_pred_rf)}, Precision: {precision_score(y_test, y_pred_rf)}, Recall: {recall_score(y_test, y_pred_rf)}")
+    logging.info(f"Gradient Boosting - Accuracy: {accuracy_score(y_test, y_pred_gb)}, Precision: {precision_score(y_test, y_pred_gb)}, Recall: {recall_score(y_test, y_pred_rf)}")
+    logging.info(f"Gradient Boosting - Accuracy: {accuracy_score(y_test, y_pred_gb)}, Precision: {precision_score(y_test, y_pred_gb)}, Recall: {recall_score(y_test, y_pred_gb)}")
 
-    combined_data = pd.concat([data_yf, data_nsepy, data_jugaad], axis=1).dropna()
-    return combined_data
+    # Save the best model
+    best_model = pipeline_rf if accuracy_score(y_test, y_pred_rf) > accuracy_score(y_test, y_pred_gb) else pipeline_gb
+    dump(best_model, MODEL_FILE)
 
-def build_and_train_model(X, y):
-    pipeline = Pipeline([
-        ('scaler', StandardScaler()),
-        ('classifier', RandomForestClassifier())
-    ])
-
-    param_grid = {
-        'classifier__n_estimators': [100, 200, 300],
-        'classifier__max_depth': [None, 10, 20, 30],
-        'classifier__min_samples_split': [2, 5, 10],
-        'classifier__min_samples_leaf': [1, 2, 4]
-    }
-
-    grid_search = GridSearchCV(pipeline, param_grid, cv=5, scoring='accuracy', n_jobs=-1)
-    grid_search.fit(X, y)
-
-    best_model = grid_search.best_estimator_
     return best_model
 
+def load_predictive_model():
+    return load(MODEL_FILE)
+
+def make_predictions(options_df, model):
+    features = options_df[['impliedVolatility', 'volume', 'openInterest', 'price_zscore',
+                           'bid_ask_spread', 'historical_volatility', 'rsi', 'skewness', 'kurtosis',
+                           'delta', 'gamma', 'theta', 'vega']]
+    options_df['prediction'] = model.predict_proba(features)[:, 1]
+
+    return options_df
+
+def check_for_gamma_blast(options_df, threshold=0.95):
+    alerts = options_df[options_df['prediction'] > threshold]
+    return alerts
+
 def main():
+    try:
+        model = load_predictive_model()
+        logging.info("Loaded existing model.")
+    except FileNotFoundError:
+        logging.info("Model file not found. Training new model.")
+        historical_data = get_historical_option_chain(SYMBOL, start_date, end_date)
+        historical_data = calculate_indicators(historical_data)
+        model = train_predictive_model(historical_data)
+
     while True:
-        now = datetime.now().time()
-        if MARKET_OPEN <= now <= MARKET_CLOSE:
-            for index_name, ticker in SYMBOLS.items():
-                options_df = get_option_chain(ticker)
+        try:
+            current_time = datetime.now().time()
+
+            # Check if market is open
+            if MARKET_OPEN <= current_time <= MARKET_CLOSE:
+                logging.info("Fetching real-time option chain data...")
+                options_df = get_option_chain(SYMBOL)
                 options_df = calculate_indicators(options_df)
 
-                # Fetch additional data
-                macro_indicators = get_macro_economic_indicators()
-                event_data = get_event_based_data()
-                sentiment = get_sentiment_analysis(ticker)
+                # Store real-time data for further analysis
+                store_real_time_data(options_df)
 
-                # Combine all data into a single DataFrame
-                options_df['macro_gdp_growth'] = macro_indicators['gdp_growth']
-                options_df['macro_interest_rate'] = macro_indicators['interest_rate']
-                options_df['macro_inflation_rate'] = macro_indicators['inflation_rate']
-                options_df['event_corporate_earnings'] = event_data['corporate_earnings']
-                options_df['event_geopolitical_events'] = event_data['geopolitical_events']
-                options_df['event_regulatory_changes'] = event_data['regulatory_changes']
-                options_df['sentiment'] = sentiment
+            else:
+                logging.info("Market closed. Fetching historical data for analysis...")
+                options_df = fetch_stored_real_time_data()
 
-                # Fetch historical data for the ticker
-                start_date = datetime.now() - pd.DateOffset(years=5)
-                end_date = datetime.now()
-                combined_data = fetch_and_prepare_data(ticker, start_date, end_date)
+                if options_df.empty:
+                    logging.warning("No stored real-time data available.")
+                    time.sleep(CHECK_INTERVAL)
+                    continue  # Retry fetching data
 
-                # Train the model with the prepared data
-                X = combined_data.drop(columns=['target'])  # Assuming 'target' is the target variable column
-                y = combined_data['target']
-                model = build_and_train_model(X, y)
+            if not options_df.empty:
+                options_df = make_predictions(options_df, model)
+                alerts = check_for_gamma_blast(options_df, ALERT_THRESHOLD)
 
-                # Predict and analyze the options
-                predictions = model.predict(options_df.drop(columns=['type']))  # Assuming 'type' column needs to be dropped for prediction
-                options_df['prediction'] = predictions
+                for index, row in alerts.iterrows():
+                    message = (f"Gamma Blast Alert: {row['type'].capitalize()} option for {SYMBOL} with strike {row['strike']} "
+                               f"might see significant movement.\nLast Price: {row['lastPrice']}\nIV: {row['impliedVolatility']}\n"
+                               f"Volume: {row['volume']}\nOpen Interest: {row['openInterest']}")
 
-                gamma_blasts = options_df[(options_df['prediction'] == 1) & (options_df['gamma'] > ALERT_THRESHOLD)]
-                if not gamma_blasts.empty:
-                    message = f"Gamma Blast Detected in {index_name} options:\n" + gamma_blasts.to_string()
-                    send_email("Gamma Blast Alert", message)
+                    # Calculate Stop Loss based on historical data (example logic)
+                    historical_mean_price = options_df.loc[index, 'lastPrice'].mean()
+                    stop_loss = historical_mean_price * 0.98  # 2% below mean price as an example
+
+                    message += f"\nStop Loss: {stop_loss}"
+
+                    logging.info(message)
+                    send_email('Gamma Blast Alert', message)
                     send_whatsapp_message(message)
 
-            time.sleep(CHECK_INTERVAL)
+        except Exception as e:
+            logging.error(f"Error in main loop: {e}")
+
+        time.sleep(CHECK_INTERVAL)
 
 if __name__ == "__main__":
     main()
+
