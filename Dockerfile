@@ -10,6 +10,6 @@ COPY . .
 # Install any needed packages specified in requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
-USER appuser
+USER 10001
 # Run script.py when the container launches
 CMD ["python", "./script.py"]
