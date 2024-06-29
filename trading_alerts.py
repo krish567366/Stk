@@ -5,6 +5,10 @@ import smtplib
 from email.mime.text import MIMEText
 from twilio.rest import Client
 import time
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Dense
+from sklearn.svm import SVC
+from xgboost import XGBClassifier
 import logging
 from scipy.stats import norm
 from datetime import datetime
@@ -44,6 +48,8 @@ logging.basicConfig(level=logging.INFO, filename='gamma_blast.log', filemode='a'
 # Define market open and close times (for illustrative purposes, adjust as per actual market timings)
 MARKET_OPEN = datetime.strptime('09:15', '%H:%M').time()
 MARKET_CLOSE = datetime.strptime('15:30', '%H:%M').time()
+
+
 
 # Additional configuration for expiry days and indices
 INDEX_EXPIRY_DAYS = {
@@ -88,6 +94,11 @@ def get_option_chain(ticker):
 
     options_df = pd.concat(options_data)
     return options_df
+def get_historical_prices(symbol, window):
+    stock = yf.Ticker(symbol) # Adjust period based on your needs (e.g., '1d', '5d', '1m') 
+    historical_data = stock.history(period="1m") # Assuming 'Close' is the closing price column
+    closing_prices = historical_data['Close']
+    return closing_prices[-window:] # Return the last 'window' days of data
 
 def calculate_indicators(options_df):
     options_df['price_change'] = options_df['lastPrice'].pct_change()
@@ -104,7 +115,12 @@ def calculate_indicators(options_df):
     options_df['rsi'] = calculate_rsi(options_df['lastPrice'])
     options_df['skewness'] = options_df['lastPrice'].skew()
     options_df['kurtosis'] = options_df['lastPrice'].kurtosis()
-    return options_df
+    options_df['oi_volume_ratio'] = options_df['openInterest'] / options_df['volume'] # Handle division by zero (consider replacing with np.nan for missing values) 
+    options_df.loc[options_df['volume'] == 0, 'oi_volume_ratio'] = np.NAN
+    underlying_symbol = options_df['underlyingSymbol'].iloc[0] # Assuming first row has symbol
+    historical_prices = get_historical_prices(underlying_symbol, window=20)
+    options_df['historical_volatility'] = calculate_historical_volatility(historical_prices)
+   return options_df
 
 def calculate_delta(S, K, sigma, T, r, option_type):
     d1 = (np.log(S / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * np.sqrt(T))
@@ -138,6 +154,12 @@ def calculate_rsi(prices, window=14):
     rs = avg_gain / avg_loss
     rsi = 100 - (100 / (1 + rs))
     return rsi
+def calculate_oi_volume_ratio(data):
+    oi = data['open_interest']
+    volume = data['volume'] 
+    oi_volume_ratio = oi / volume # Assuming data is a dictionary 
+    return oi_volume_ratio
+
 
 def train_predictive_model(data):
     features = data[['impliedVolatility', 'volume', 'openInterest', 'price_zscore',
@@ -150,27 +172,59 @@ def train_predictive_model(data):
     scaler = StandardScaler()
     clf_rf = RandomForestClassifier(n_estimators=100, random_state=42)
     clf_gb = GradientBoostingClassifier(n_estimators=100, learning_rate=0.1, random_state=42)
+    clf_svm = SVC(kernel='rbf', random_state=42)
+    clf_xgb = XGBClassifier(n_estimators=100, learning_rate=0.1, random_state=42)
+
+    model_nn = Sequential()
+    model_nn.add(Dense(128, activation='relu', input_shape=(features.shape[1],)))
+    model_nn.add(Dense(64, activation='relu'))
+    model_nn.add(Dense(1, activation='sigmoid'))
 
     pipeline_rf = Pipeline([('scaler', scaler), ('clf', clf_rf)])
     pipeline_gb = Pipeline([('scaler', scaler), ('clf', clf_gb)])
+    pipeline_svm = Pipeline([('scaler', scaler), ('clf', clf_svm)])
+    pipeline_xgb = Pipeline([('scaler', scaler), ('clf', clf_xgb)])
+
+    model_nn.compile(loss='binary_crossentropy', optimizer='adam', metrics=['accuracy'])
 
     # Train models
     pipeline_rf.fit(X_train, y_train)
     pipeline_gb.fit(X_train, y_train)
+    pipeline_svm.fit(X_train, y_train)
+    pipeline_xgb.fit(X_train, y_train)
+
+    model_nn.fit(X_train, y_train, epochs=10, batch_size=32)
 
     # Evaluate models
     y_pred_rf = pipeline_rf.predict(X_test)
     y_pred_gb = pipeline_gb.predict(X_test)
+    y_pred_svm = pipeline_svm.predict(X_test)
+    y_pred_xgb = pipeline_xgb.predict(X_test)
+
+    y_pred_nn = model_nn.predict(X_test)
+    nn_accuracy = accuracy_score(y_test, y_pred_nn)
+    nn_precision = precision_score(y_test, y_pred_nn)
+    nn_recall = recall_score(y_test, y_pred_nn)
+
+    xgb_accuracy = accuracy_score(y_test, y_pred_xgb)
+    xgb_precision = precision_score(y_test, y_pred_xgb)
+    xgb_recall = recall_score(y_test, y_pred_xgb)
+
+    svm_accuracy = accuracy_score(y_test, y_pred_svm)
+    svm_precision = precision_score(y_test, y_pred_svm)
+    svm_recall = recall_score(y_test, y_pred_svm)
 
     logging.info(f"Random Forest - Accuracy: {accuracy_score(y_test, y_pred_rf)}, Precision: {precision_score(y_test, y_pred_rf)}, Recall: {recall_score(y_test, y_pred_rf)}")
     logging.info(f"Gradient Boosting - Accuracy: {accuracy_score(y_test, y_pred_gb)}, Precision: {precision_score(y_test, y_pred_gb)}, Recall: {recall_score(y_test, y_pred_rf)}")
     logging.info(f"Gradient Boosting - Accuracy: {accuracy_score(y_test, y_pred_gb)}, Precision: {precision_score(y_test, y_pred_gb)}, Recall: {recall_score(y_test, y_pred_gb)}")
+    logging.info(f"Neural Network - Accuracy: {nn_accuracy}, Precision: {nn_precision}, Recall: {nn_recall}")
+    logging.info(f"XGBoost - Accuracy: {xgb_accuracy}, Precision: {xgb_precision}, Recall: {xgb_recall}")
+    logging.info(f"SVM - Accuracy: {svm_accuracy}, Precision: {svm_precision}, Recall: {svm_recall}")
 
     # Save the best model
-    best_model = pipeline_rf if accuracy_score(y_test, y_pred_rf) > accuracy_score(y_test, y_pred_gb) else pipeline_gb
+    best_models = [pipeline_rf, pipeline_gb, pipeline_svm, pipeline_xgb, model_nn]
+    best_model = max(best_models, key=lambda x: accuracy_score(y_test, x.predict(X_test))) # Save the best model dump(best_model, MODEL_FILE)
     dump(best_model, MODEL_FILE)
-
-    return best_model
 
 def load_predictive_model():
     return load(MODEL_FILE)
