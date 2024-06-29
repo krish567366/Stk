@@ -4,8 +4,7 @@ FROM python:3.9-slim
 # Set the working directory
 WORKDIR /usr/src/app
 
-COPY *.txt /usr/src/app/
-COPY . /usr/src/app/
+COPY. /usr/src/app/
 # Copy the current directory contents into the container at /usr/src/app
 
 
