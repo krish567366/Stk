@@ -1,0 +1,11 @@
+apiVersion: core.choreo.dev/v1beta1
+kind: ComponentConfig
+spec:
+  inbound:
+    - name: My Docker Container
+      port: 9090
+      type: REST
+      networkVisibility: Public
+      context: /
+  build:
+    dockerfile: Dockerfile
