@@ -5,7 +5,7 @@ FROM python:3.9-slim
 WORKDIR /usr/src/app
 
 COPY requirements.txt /usr/src/app/ 
-COPY. /usr/src/app/
+COPY . /usr/src/app/
 # Copy the current directory contents into the container at /usr/src/app
 
 
