@@ -22,6 +22,7 @@ from sklearn.metrics import accuracy_score, precision_score, recall_score
 # Configuration
 EMAIL_USER = 'officaldesk.officeofkb@gmail.com'
 EMAIL_PASSWORD = 'krishna567@V'
+recipient_email = 'gm.officeofkb@gmail.com'
 TWILIO_SID = '00000000000'
 TWILIO_TOKEN = '00000000000'
 TWILIO_PHONE_NUMBER = '00000000000'
@@ -65,11 +66,11 @@ def send_email(subject, body):
     msg = MIMEText(body)
     msg['Subject'] = subject
     msg['From'] = EMAIL_USER
-    msg['To'] = YOUR_PHONE_NUMBER
+    msg['To'] = recipient_email
 
     with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
         server.login(EMAIL_USER, EMAIL_PASSWORD)
-        server.sendmail(EMAIL_USER, YOUR_PHONE_NUMBER, msg.as_string())
+        server.sendmail(EMAIL_USER, recipient_email, msg.as_string())
 
 def send_whatsapp_message(body):
     twilio_client.messages.create(
