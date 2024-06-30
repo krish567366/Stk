@@ -20,12 +20,12 @@ from sklearn.pipeline import Pipeline
 from sklearn.metrics import accuracy_score, precision_score, recall_score
 
 # Configuration
-EMAIL_USER = 'your_email@gmail.com'
-EMAIL_PASSWORD = 'your_email_password'
-TWILIO_SID = 'your_twilio_sid'
-TWILIO_TOKEN = 'your_twilio_token'
-TWILIO_PHONE_NUMBER = 'your_twilio_phone_number'
-YOUR_PHONE_NUMBER = 'your_phone_number'
+EMAIL_USER = 'officaldesk.officeofkb@gmail.com'
+EMAIL_PASSWORD = 'krishna567@V'
+TWILIO_SID = '00000000000'
+TWILIO_TOKEN = '00000000000'
+TWILIO_PHONE_NUMBER = '00000000000'
+YOUR_PHONE_NUMBER = '0000000000'
 SYMBOLS = {
     'Nifty': '^NSEI',
     'Bank Nifty': '^NSEBANK',
@@ -156,8 +156,8 @@ def calculate_rsi(prices, window=14):
     return rsi
 def calculate_oi_volume_ratio(data):
     oi = data['open_interest']
-    volume = data['volume'] 
-    oi_volume_ratio = oi / volume # Assuming data is a dictionary 
+    volume = data['volume']
+    oi_volume_ratio = oi / volume # Assuming data is a dictionary
     return oi_volume_ratio
 
 
@@ -290,7 +290,7 @@ def main():
 
                     logging.info(message)
                     send_email('Gamma Blast Alert', message)
-                    send_whatsapp_message(message)
+
 
         except Exception as e:
             logging.error(f"Error in main loop: {e}")
