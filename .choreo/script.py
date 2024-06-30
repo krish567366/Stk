@@ -121,7 +121,7 @@ def calculate_indicators(options_df):
     underlying_symbol = options_df['underlyingSymbol'].iloc[0] # Assuming first row has symbol
     historical_prices = get_historical_prices(underlying_symbol, window=20)
     options_df['historical_volatility'] = calculate_historical_volatility(historical_prices)
-   return options_df
+    return options_df
 
 def calculate_delta(S, K, sigma, T, r, option_type):
     d1 = (np.log(S / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * np.sqrt(T))
